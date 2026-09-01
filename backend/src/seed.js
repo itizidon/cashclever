@@ -3,7 +3,6 @@ import { pool } from './db.js'
 const currentUser = {
   name: 'CashClever User',
   email: 'current.user@cashclever.local',
-  status: 'Active',
 }
 
 const connectedUsers = [
@@ -56,8 +55,6 @@ try {
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       name VARCHAR(100) NOT NULL,
       email VARCHAR(320) NOT NULL UNIQUE,
-      status VARCHAR(20) NOT NULL DEFAULT 'Pending'
-        CHECK (status IN ('Active', 'Pending', 'Inactive')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
@@ -65,8 +62,7 @@ try {
 
   await client.query(`
     ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'Pending'
-      CHECK (status IN ('Active', 'Pending', 'Inactive'))
+    DROP COLUMN IF EXISTS status
   `)
 
   await client.query(`
@@ -76,6 +72,8 @@ try {
       connected_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       connection_type VARCHAR(20) NOT NULL
         CHECK (connection_type IN ('Family', 'Coworker', 'Friend')),
+      status VARCHAR(20) NOT NULL DEFAULT 'Pending'
+        CHECK (status IN ('Active', 'Pending', 'Inactive')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT connections_different_users
@@ -87,34 +85,33 @@ try {
 
   await client.query(`
     ALTER TABLE connections
-    DROP COLUMN IF EXISTS status
+    ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'Pending'
+      CHECK (status IN ('Active', 'Pending', 'Inactive'))
   `)
 
   const currentUserResult = await client.query(
-    `INSERT INTO users (name, email, status)
-     VALUES ($1, $2, $3)
+    `INSERT INTO users (name, email)
+     VALUES ($1, $2)
      ON CONFLICT (email)
      DO UPDATE SET
        name = EXCLUDED.name,
-       status = EXCLUDED.status,
        updated_at = NOW()
      RETURNING id`,
-    [currentUser.name, currentUser.email, currentUser.status],
+    [currentUser.name, currentUser.email],
   )
 
   const currentUserId = currentUserResult.rows[0].id
 
   for (const user of connectedUsers) {
     const userResult = await client.query(
-      `INSERT INTO users (name, email, status)
-       VALUES ($1, $2, $3)
+      `INSERT INTO users (name, email)
+       VALUES ($1, $2)
        ON CONFLICT (email)
        DO UPDATE SET
          name = EXCLUDED.name,
-         status = EXCLUDED.status,
          updated_at = NOW()
        RETURNING id`,
-      [user.name, user.email, user.status],
+      [user.name, user.email],
     )
 
     const connectedUserId = userResult.rows[0].id
@@ -123,14 +120,16 @@ try {
       `INSERT INTO connections (
          user_id,
          connected_user_id,
-         connection_type
+         connection_type,
+         status
        )
-       VALUES ($1, $2, $3)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (user_id, connected_user_id)
        DO UPDATE SET
          connection_type = EXCLUDED.connection_type,
+         status = EXCLUDED.status,
          updated_at = NOW()`,
-      [currentUserId, connectedUserId, user.connectiontype],
+      [currentUserId, connectedUserId, user.connectiontype, user.status],
     )
   }
 
